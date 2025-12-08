@@ -1,22 +1,8 @@
-import torch
+from constant import DEVICE, SEVERITY_CLASSES, torch
 import torch.nn.functional as F
 from PIL import Image
 import os
-from model_definitions import CNNModel,TransferVGG, TransferEfficient
-
-# CONSTANTS AND UTILITY SETUP
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-IMG_SIZE = 224 
-
-# Define severity weights
-SEVERITY_PENALTIES = {
-    'no_accident': 1.0,   
-    'minor': 1.25,        # 25% penalty
-    'intermediate': 1.75, # 75% penalty
-    'major': 2.5          # 150% penalty
-}
-
-SEVERITY_CLASSES = ['intermediate', 'major', 'minor'] 
+from model_definitions import CNNModel, TransferVGG, TransferEfficient
 
 # INCIDENT CLASSIFIER CLASS (ML Wrapper)
 class IncidentClassifier:
@@ -111,16 +97,3 @@ class IncidentClassifier:
             
             severity_class = SEVERITY_CLASSES[predicted_b_index.item()]
             return severity_class
-
-# Pathfinding Integration (The Core Cost Function)
-def calculate_edge_cost(base_travel_time: float, image_path: str, ml_classifier: IncidentClassifier) -> tuple[float, str]:
-    """
-    Calculates the predicted travel time (cost) for an edge.
-    Returns the predicted cost and the severity string for logging/visualization.
-    """
-    predicted_severity = ml_classifier.predict_severity(image_path)
-    penalty_factor = SEVERITY_PENALTIES.get(predicted_severity, 1.0)
-    predicted_cost = base_travel_time * penalty_factor
-    
-    # Return both the cost (for pathfinding) and the severity (for visualization/logging)
-    return predicted_cost, predicted_severity
