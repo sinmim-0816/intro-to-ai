@@ -5,7 +5,8 @@ import pydeck as pdk
 import xml.etree.ElementTree as ET
 import os
 from typing import List, Tuple, Optional, Dict, Set, Union
-from backend import IncidentClassifier, calculate_edge_cost
+from classifier import IncidentClassifier
+from edgecost import calculate_edge_cost
 from graph import Graph, find_path_algorithm
 # Read Osm File
 TRAFFIC_BASE_TIMES: Dict[Tuple[str,str],float]={}
