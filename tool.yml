@@ -14,6 +14,8 @@ dependencies:
       - jupyterlab
       - joblib
       - opencv-python-headless
+      - pillow
+      - pydeck
       - torch
       - torchvision
       - torchaudio

@@ -611,9 +611,9 @@ def find_path_algorithm(graph: Graph, start: str, end: str, algorithm_choice: st
     coords=graph.coords
     path_metrics:PathMetrics=[]
     
-    if algorithm_choice=="AS":
+    if algorithm_choice in {"AS", "A*"}:
         path_metrics = a_star(graph_connections, start, end, coords)
-    elif algorithm_choice=="IDAS":
+    elif algorithm_choice in {"IDAS", "IDA*"}:
         path_metrics = ida_star(graph_connections, start, end, coords)
     elif algorithm_choice == 'GBFS':
         path_metrics = gbfs(graph_connections, start, end, coords)
