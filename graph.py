@@ -1,15 +1,16 @@
-from typing import Tuple, Dict, List, Union,Set,Callable
+from typing import Tuple, Dict, List, Union,Set,Callable,Any
 import os
 from collections import deque
 from heuristic import heuristic
 import heapq
+from constant import ACCIDENT_TYPE
 
 class Graph:
     """
     Represents the simplified road network graph extracted from OSM data 
     and populated with base travel times from the traffic file.
     """
-    def __init__(self, node_coords: Dict[str, Tuple[float,float]], graph_connections: Dict[str, Dict[str,float]]):
+    def __init__(self, node_coords: Dict[str, Tuple[float,float]], graph_connections: Dict[str, Dict[str,float]], edge_info):
         """
         Initializes the graph with coordinates and connectivity (adjacency list).
         Connections store {Node_U: {Node_V: Base_Time}}
@@ -17,15 +18,24 @@ class Graph:
         self.node_names=list(node_coords.keys())
         self.coords=node_coords
         self.connections=graph_connections
-        
-    def get_all_nodes(self) -> List[str]:
-        """Returns a list of all named nodes."""
-        return self.node_names
-    
-    def get_base_time(self, u: str, v: str) -> float:
-        """Retrieves the base travel time cost from node u to node v."""
-        return self.connections.get(u, {}).get(v, float('inf'))
-    
+        self.edge_info=edge_info
+
+    def get_edge_info(self, u, v):
+        """Get dictionary {way_id, base_time}."""
+        return self.edge_info.get(u, {}).get(v, None)
+
+    def get_base_time(self, u, v):
+        edge = self.edge_info.get(u, {}).get(v)
+        if not edge:
+            return float('inf')
+        return edge["base_time"]
+
+    def get_way_id(self, u, v):
+        edge = self.edge_info.get(u, {}).get(v)
+        if not edge:
+            return None
+        return edge["way_id"]
+
     def get_all_possible_files()->List[str]:
         """
         Attempts to list all .txt files in the 'test_case' folder for selection. 
@@ -39,7 +49,6 @@ class Graph:
             print(f"Error while listing files: {e}")
             files=[]
         return files
-
 
 GraphConnections = Dict[str, Dict[str, float]]
 Path = List[str]
@@ -60,64 +69,95 @@ def reconstruct_path(start_node:str, goal_node:str, parent_dict:Dict[str,str])->
         return path
     return []
 
+def path_cost(path: list[str], graph: Graph, accident_segments: dict, accident_multiplier: int) -> float:
+    """
+    Computes total cost of a path, applying accident multipliers if present.
+    """
+    total = 0.0
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i+1]
+
+        # Use edge_info to get both way_id and base_time
+        edge = graph.get_edge_info(u, v)
+        if not edge:
+            return float('inf')
+
+        base_time = edge["base_time"]
+        way_id = edge["way_id"]
+
+        if way_id in accident_segments:
+            severity = accident_segments[way_id]["severity"]
+            multiplier=accident_multiplier*ACCIDENT_TYPE.get(severity.lower(),1.0)
+            total += base_time * multiplier
+        else:
+            total += base_time
+    return total
+
 # BFS
-def bfs(graph_connections: GraphConnections, start: str, goal: str, max_paths: int = 5) -> PathMetrics:
+def bfs(graph: 'Graph', start: str, goal: str, accident_multiplier: int, max_paths: int = 5, accident_segments: Dict[str, Dict[str, Any]]= None) -> 'PathMetrics':
     """
     A helper function for BFS that returns up to max_paths shortest paths.
+    
+    NOTE: This BFS finds shortest paths by the number of steps (edges). 
+    It is modified to return multiple paths, even if they are slightly longer 
+    in steps, up to the max_paths limit.
     """
-    graph_list_format: InternalGraph = {u: [(v, cost) for v, cost in connections.items()] for u, connections in graph_connections.items()}
+    # 1. Prepare the graph for easy traversal (though the original graph object 
+    #    could also be used directly if it's performant)
+    graph_list_format: Dict[str, List[Tuple[str, float]]] = {
+        u: [(v, graph.get_base_time(u, v)) for v in graph.connections.get(u, {})]
+        for u in graph.connections
+    }
     
     queue = deque([[start]])
-    found_paths=[]
-    min_length_found=float('inf')
-    # record parent relationships for GUI
-    parent = {start: None}
-
-    # continue until there are no more nodes to explore
-    while queue and len(found_paths)<max_paths:
+    found_paths: List[List[str]] = []
+    
+    # continue until the queue is empty or we have found enough paths
+    while queue and len(found_paths) < max_paths:
         # get the next path from the queue (FIFO)
         path = queue.popleft()
         node = path[-1] 
         
-        current_length=len(path)
-
-        if current_length > min_length_found and min_length_found != float('inf'):
-            break
-        
-        # check if the goal is reached
+        # 2. Check if the goal is reached
         if node == goal:
-            if min_length_found == float('inf'):
-                min_length_found=current_length
-            if current_length == min_length_found:
-                found_paths.append(path)
+            found_paths.append(path)
+            continue 
         
-        # explore all unvisited neighbors
-        if len(found_paths)<max_paths or min_length_found==float('inf'):
-            if node in graph_list_format:
-                for neighbour, _ in sorted(graph_list_format.get(node, [])):
-                    # avoid cycles within the same path
-                    if neighbour not in path: 
-                        parent[neighbour] = node
-                        # append new path including the neighbour
-                        new_path = path + [neighbour]
-                        queue.append(new_path)
-                        
+        # 3. Explore neighbors
+        if node in graph_list_format:
+            # Explore neighbors in sorted order (as in the original)
+            for neighbour, _ in sorted(graph_list_format.get(node, [])):
+                # avoid cycles within the same path
+                if neighbour not in path: 
+                    # append new path including the neighbour
+                    new_path = path + [neighbour]
+                    queue.append(new_path)
 
-    return [
+    # 4. Calculate metrics and sort by cost
+    path_metrics = [
         {
-            "path": p, 
-            "goal_node": goal, 
-            "meet_node": None
-        } 
+            "path": p,
+            "goal_node": goal,
+            "meet_node": None,
+            "total_cost": path_cost(p, graph, accident_segments, accident_multiplier),
+            "step_count": len(p) - 1
+        }
         for p in found_paths
     ]
+    
+    path_metrics.sort(key=lambda x: x["total_cost"])
+    
+    return path_metrics
 
 # DFS
-def dfs(graph_connections: GraphConnections, start: str, goal: str, max_paths: int = 5) -> PathMetrics:
+def dfs(graph: Graph, start: str, goal: str, accident_multiplier:int, max_paths: int = 5,accident_segments: dict[str, dict[str, Any]] = None) -> PathMetrics:
     """
     A helper function for DFS that returns up to max_paths shortest paths.
     """
-    graph_list_format: InternalGraph = {u: [(v, cost) for v, cost in connections.items()] for u, connections in graph_connections.items()}
+    graph_list_format: InternalGraph = {
+        u: [(v, graph.get_base_time(u, v)) for v in graph.connections.get(u, {})]
+        for u in graph.connections
+    }
     # initialize stack with a path staring from the start node
     stack = [[start]] 
     # track parent relationships for GUI and final path reconstruction
@@ -153,14 +193,19 @@ def dfs(graph_connections: GraphConnections, start: str, goal: str, max_paths: i
                 new_path = path + [neighbour]
                 stack.append(new_path)
 
-    return [
+    path_metrics=[
         {
             "path": p, 
             "goal_node": goal, 
-            "meet_node": None # DFS is unidirectional, no meeting node
+            "meet_node": None,
+            "total_cost": path_cost(p, graph,   accident_segments, accident_multiplier),
+            "step_count": len(p) - 1
         } 
         for p in found_paths
     ]
+    path_metrics.sort(key=lambda x: x["total_cost"])
+    return path_metrics
+
 # Bidirectional Search (BDS)
 def path_to_tuple(path:Path)->Tuple[str, ...]:
     """Converts a list path to a tuple for set storage (hashing)."""
@@ -197,12 +242,15 @@ def reconstruct_bidirectional_path(meet_node:str, parent_start: Dict[str,str], p
 
     return path_start + path_goal_segment
 
-def bds(graph_connections:GraphConnections, start:str, goal:str, max_path:int=5) -> PathMetrics:
+
+def bds(graph:Graph, start:str, goal:str,accident_multiplier:int, max_path:int=5,accident_segments: dict[str, dict[str, Any]] = None) -> PathMetrics:
     """
     A helper function for BDS that returns up to max_paths shortest paths.
     """
-    graph_list_format: InternalGraph = {u: [(v, cost) for v, cost in connections.items()] for u, connections in graph_connections.items()}
-    
+    graph_list_format: InternalGraph = {
+        u: [(v, graph.get_base_time(u, v)) for v in graph.connections.get(u, {})]
+        for u in graph.connections
+    }
     found_paths_set:Set[Tuple[str,...]] = set()
     all_path_metrics:PathMetrics = []
     
@@ -308,7 +356,7 @@ def bds(graph_connections:GraphConnections, start:str, goal:str, max_path:int=5)
                             })
                             
                             if len(all_path_metrics) >= max_path:
-                                break # Break the inner loop (neighbors)
+                                break 
             
             if len(all_path_metrics) >= max_path:
                 continue 
@@ -316,325 +364,306 @@ def bds(graph_connections:GraphConnections, start:str, goal:str, max_path:int=5)
 
     # 5. Final results
     if all_path_metrics:
-        # Sort paths by length (number of edges) to return the k *shortest* paths
-        all_path_metrics.sort(key=lambda x: len(x["path"]))
+        # Sort paths by total cost instead of length
+        all_path_metrics.sort(
+            key=lambda x: path_cost(x["path"], graph, accident_segments,accident_multiplier)
+        )
+
+        for pm in all_path_metrics:
+            pm["total_cost"] = path_cost(pm["path"], graph, accident_segments,accident_multiplier)
         
     return all_path_metrics
 
 # GBFS
-def gbfs(graph_connections: GraphConnections, start: str, goal: str, coords: Dict[str, Tuple[float, float]], max_paths: int = 5) -> PathMetrics:
+FrontierEntry = Tuple[float, Path]
+def gbfs(graph: 'Graph', start: str, goal: str, coords: Dict[str, Tuple[float, float]], accident_multiplier: int, 
+         accident_segments: Dict[str, Dict[str, Any]] = None, max_paths: int = 5) -> 'PathMetrics':
     """
-    A helper function for GBFS that returns up to max_paths shortest paths.
+    MODIFIED Greedy Best-First Search (GBFS) to return up to max_paths unique paths.
+    
+    WARNING: GBFS only minimizes heuristic cost (h), not total path cost (g+h), 
+    meaning paths found are not guaranteed to be the cost-shortest.
     """
-    graph_list_format: InternalGraph = {u: [(v, cost) for v, cost in connections.items()] for u, connections in graph_connections.items()}
     
-    found_paths:List[Path]=[]
-    chronological_count:int = 0
-    found_paths_set:Set[Tuple[str,...]] = set()
+    # graph_list_format remains the same
+    graph_list_format: Dict[str, List[Tuple[str, float]]] = {
+        u: [(v, graph.get_base_time(u, v)) for v in graph.connections.get(u, {})]
+        for u in graph.connections
+    }
     
-    visited:Set[str] = set()
+    found_paths: List[Path] = []
+    found_paths_set: Set[Tuple[str, ...]] = set()
     
-    # Frontier: Store (h_cost, node, chronological)
-    # The full path list is removed for efficiency.
-    frontier:List[Tuple[float,str]] = [(heuristic(start, goal, coords), start, chronological_count)]
-    parent = {start: None}
+    # 1. Initialize frontier with (h_cost, [start_node]) - Storing the full path
+    # Removed chronological_count, visited set, and parent dictionary.
+    frontier: List[FrontierEntry] = [(heuristic(start, goal, coords), [start])]
     
-    chronological_count += 1
-
     # continue search while nodes remain in the frontier
     while frontier and len(found_paths) < max_paths:
-        # get node with smallest heuristic value
-        h, node, chronological = heapq.heappop(frontier) 
+        # get path with smallest heuristic value
+        h, path = heapq.heappop(frontier) 
+        node = path[-1]
         
-        # Skip if already visited/expanded
-        if node in visited:
-            continue
-            
-        # Mark node as visited/expanded
-        visited.add(node)
-
-        # check if goal is reached
+        # 2. Check if goal is reached
         if node == goal:
-            
-            # The path is reconstructed using the parent dictionary
-            full_path = reconstruct_path(start, node, parent) 
-            
-            # Check for path uniqueness
-            path_tuple = tuple(full_path)
-            if full_path and path_tuple not in found_paths_set:
-                
-                path_cost = len(full_path) - 1
-                
-                # Store the path and update the set
-                found_paths.append(full_path)
+            path_tuple = tuple(path)
+            # Only add if the exact path hasn't been found already
+            if path_tuple not in found_paths_set:
+                found_paths.append(path)
                 found_paths_set.add(path_tuple)
-                
-                if len(found_paths) >= max_paths:
-                    break
+            
+            # Continue exploring other paths if max_paths isn't reached
+            continue
 
-        # explore neighbors in sorted order
+        # 3. Explore neighbors
+        # No need to check max_path limit here, we continue until all paths in 
+        # the heap are explored or max_paths is hit in the while loop condition.
         for neighbour, _ in sorted(graph_list_format.get(node, [])):
             
-            # Skip neighbors already visited
-            if neighbour in visited:
-                continue
-            
-            # Check for max_path limit BEFORE pushing new nodes
-            if len(found_paths) >= max_paths:
-                break
-            
-            # record parent for path reconstruction
-            parent[neighbour] = node
-            
-            # push neighbor to frontier based on heuristic value
-            heapq.heappush(frontier, (heuristic(neighbour, goal, coords), neighbour, chronological_count))
-            chronological_count += 1
+            # Prevent cycles within the current path only
+            if neighbour not in path:
+                new_path = path + [neighbour]
+                
+                # Calculate heuristic for the neighbor
+                h_new = heuristic(neighbour, goal, coords)
+                
+                # push new path to frontier
+                heapq.heappush(frontier, (h_new, new_path))
 
-    return [
+    # 4. Calculate metrics and sort by cost (Final logic remains the same)
+    path_metrics = [
         {
-            "path": p, 
-            "goal_node": p[-1], 
-            "meet_node": None
-        } 
+            "path": p,
+            "goal_node": goal,
+            "meet_node": None,
+            "total_cost": path_cost(p, graph, accident_segments, accident_multiplier),
+            "step_count": len(p) - 1
+        }
         for p in found_paths
     ]
-# A Star
-def a_star(graph_connections: GraphConnections, start: str, goal: str, coords: Dict[str, Tuple[float, float]], max_path: int = 5) -> PathMetrics:
-    """
-    A helper function for A star that returns up to max_paths shortest paths.
-    """
-    graph_list_format: InternalGraph = {u: [(v, cost) for v, cost in connections.items()] for u, connections in graph_connections.items()}
+    path_metrics.sort(key=lambda x: x["total_cost"])
     
-    found_paths:List[Path]=[]
-    found_paths_set: Set[Tuple[str,...]] = set()
-    # Initialize counters and tracking structures
-    chronological_count:int = 0  
+    return path_metrics
+
+# A Star
+import heapq
+from typing import Any, Dict, List, Optional, Set, Tuple, Callable
+
+# A star
+def a_star(graph: 'Graph', start: str, goal: str, coords: Dict[str, Tuple[float, float]],
+                      accident_multiplier: int, accident_segments: Optional[Dict[str, Dict[str, Any]]] = None, 
+                      max_path: int = 5) -> 'PathMetrics':
+    """
+    MODIFIED A* Search to find up to max_path cost-shortest unique paths 
+    by removing the single-path (best_g) pruning.
+    """
+
+    graph_list_format: Dict[str, List[Tuple[str, float]]] = {
+        u: [(v, graph.get_base_time(u, v)) for v in graph.connections.get(u, {})]
+        for u in graph.connections
+    }
+    
+    found_paths: List[List[str]] = []
+    found_paths_set: Set[Tuple[str, ...]] = set()
+    
+    chronological_count: int = 0
     expansion_order = {} 
-    expand_counter:int = 0
+    expand_counter: int = 0
+    frontier: List[Tuple[float, int, str, float, Dict[str, str]]] = [
+        (heuristic(start, goal, coords), chronological_count, start, 0, {start: None})
+    ]
 
-    # dictionary to store the lowest g cost found so far for each node
-    best_g:Dict[str,float] = {start: 0}
-
-    # (f, parent_expansion_order, chronological, node, g, parent)
-    frontier:List[Tuple[float,float,str,Dict[str,str]]] = [(heuristic(start, goal, coords), -1, chronological_count, start, 0, {start: None})]
-
-    # increment for the next node generated
     chronological_count += 1
 
-    while frontier and len(found_paths)<max_path:
-        # pop the node with the lowest f value
-        f, parent_exp, chronological, node, g, parent = heapq.heappop(frontier)
+    while frontier and len(found_paths) < max_path:
+        f, chronological, node, g, parent = heapq.heappop(frontier)
 
-        # recode expansion order
         expansion_order[node] = expand_counter
         expand_counter += 1
 
         # check if a goal is found
         if node == goal:
             current_path = reconstruct_path(start, node, parent)
-            path_tuple=tuple(current_path)
+            path_tuple = tuple(current_path)
+            
             if current_path and path_tuple not in found_paths_set:
                 found_paths.append(current_path)
                 found_paths_set.add(path_tuple)
-                if len(found_paths) >= max_path:
-                    break
-                
+            continue 
 
-        # generate children after expansion order assigned
-        for neighbour, cost in sorted(graph_list_format.get(node, [])):
-            # skip if neighbour is already in the path
+        # generate children
+        for neighbour, _ in sorted(graph_list_format.get(node, [])):
+            
             if neighbour in parent:
                 continue
             
-            # count new path cost
-            new_g = g + cost
+            segment_full_cost = path_cost([node, neighbour], graph, accident_segments, accident_multiplier)
+            
+            new_g = g + segment_full_cost
 
-            # skip if already found a cheaper path to neighbour
-            if new_g >= best_g.get(neighbour, float('inf')):
-                continue
-
-            # record best g cost and count total estimated cost (f = g + h)
             new_f = new_g + heuristic(neighbour, goal, coords)
 
-            # create new parent dictionary
             new_parent = dict(parent)
             new_parent[neighbour] = node
-
-            # push neighbour to frontier
-            heapq.heappush(frontier, (new_f, expansion_order[node], chronological_count, neighbour, new_g, new_parent))
+            heapq.heappush(frontier, (new_f, chronological_count, neighbour, new_g, new_parent))
             chronological_count += 1
 
-    # yield failure if no path found
     if found_paths:
-        found_paths.sort(key=lambda p: len(p)) 
-        return [
-            {
-                "path": p, 
-                "goal_node": p[-1], 
-                "meet_node": None
-            } 
-            for p in found_paths
-        ]
+        found_paths.sort(key=lambda p: path_cost(p, graph, accident_segments, accident_multiplier))
+        
+        path_metrics = []
+        for p in found_paths[:max_path]: # Only process up to max_path elements
+            final_total_cost = path_cost(p, graph, accident_segments, accident_multiplier)
+            path_metrics.append({
+                "path": p,
+                "goal_node": p[-1],
+                "meet_node": None,
+                "total_cost": final_total_cost, # <-- CORRECTED
+                "step_count": len(p) - 1
+            })
+        return path_metrics
     else:
         return []
+    
 # IDA Star
-def ida_star(graph_connections: GraphConnections, start: str, goal: str, coords: Dict[str, Tuple[float, float]], max_path: int = 5) -> PathMetrics:
+def ida_star(
+    graph: Graph,
+    start: str,
+    goal: str,
+    coords: Dict[str, Tuple[float, float]],
+    accident_multiplier: int,
+    accident_segments: dict[str, dict[str, Any]] = None,
+    max_paths: int = 5
+) -> PathMetrics:
     """
-    A helper function for IDA star that returns up to max_paths shortest paths.
+    IDA* search returning up to max_paths shortest paths.
+    Considers base travel times and accident multipliers.
     """
-    graph_list_format: InternalGraph = {u: [(v, cost) for v, cost in connections.items()] for u, connections in graph_connections.items()}
+    path_metrics: List[Dict[str, Any]] = []
     
-    def dfs_limited(node, g, bound, path, found_paths, found_paths_set, max_path, graph_list_format):
-        """
-        Recursive depth-limited DFS used by IDA*.
-        Returns the smallest f-cost that exceeded the current bound, 
-        or a special string signal.
-        """
-        
+    # Storage for discovered paths
+    found_paths: List[Path] = []
+    found_paths_set: Set[Tuple[str, ...]] = set()
+
+    # --------------------------
+    # Inner DFS: depth-limited search
+    # --------------------------
+    def dfs_limited(node: str, g: float, bound: float, path: List[str]):
+        nonlocal min_exceed, found_paths
+    
         f = g + heuristic(node, goal, coords)
-        
-        # recursive depth-limited DFS used by IDA*
+
+        # If f-cost exceeds limit, we update min_exceed
         if f > bound:
-            return f
-        
-        # goal check
+            min_exceed = min(min_exceed, f)
+            return
+
+        # If goal is reached → record path
         if node == goal:
-            full_path = path
-            path_tuple = tuple(full_path)
-            
-            # Check for path uniqueness
+            path_tuple = tuple(path)
             if path_tuple not in found_paths_set:
-                # Path Cost (g is the path cost in A* algorithms)
-                path_cost = g 
-                
-                found_paths.append((path_cost, full_path))
+                found_paths.append(list(path))
                 found_paths_set.add(path_tuple)
-                
-                # Check if we hit the limit
-                if len(found_paths) >= max_path:
-                    return "MAX_FOUND" 
-        
-        # generate and sort neighbors
-        neighbors_data = []
-        for neighbour, cost in graph_list_format.get(node, []):
-            if neighbour not in path: 
-                g_new = g + cost
-                h_new = heuristic(neighbour, goal, coords)
-                f_new = g_new + h_new
+            return
 
-                # store multiple tie-breaking values for consistent ordering
-                neighbors_data.append((f_new, h_new, neighbour, g_new, cost)) 
-                
-        # sort neighbors by (f, h, node) for tie-breaking
-        neighbors_data.sort(key=lambda x: (x[0], x[1], x[2])) 
-        
-        min_bound = float('inf')
-        
-        # recursive exploration of neighbors
-        for f_new, h_new, neighbour, g_new, cost in neighbors_data:
-            # 6. Pass all tracking variables recursively
-            result = dfs_limited(
-                neighbour, g_new, bound, path + [neighbour], found_paths, found_paths_set, max_path,graph_list_format
-            )
+        # Explore neighbors
+        for neighbour in graph.connections.get(node, {}):
+            if neighbour in path:  # avoid cycles
+                continue
 
-            # Handle termination and next bound calculation
-            if result == "MAX_FOUND":
-                return "MAX_FOUND"
-            elif isinstance(result, (int, float)) and result < min_bound:
-                # record smallest f value exceeding the bound
-                min_bound = result 
-                
-        # Return the smallest exceeding bound (min_bound) or MAX_FOUND/None
-        return min_bound
-
-    # Outer loop for Iterative Deepening
-    bound = heuristic(start, goal, coords) 
-    parent = {start: None}
-    
-    # K-Path Tracking Initialization
-    found_paths:List[Tuple[float,Path]] = []
-    found_paths_set = set()
-
-    while True:
-        # Check limit before starting a new iteration
-        if len(found_paths) >= max_path:
-            break
+            # Base cost only; accident cost handled later in path_cost()
+            segment_full_cost = path_cost([node,neighbour], graph, accident_segments, accident_multiplier)
+            dfs_limited(neighbour, g + segment_full_cost, bound, path + [neighbour])
             
-        # 1. Call dfs_limited with all tracking data
-        result = dfs_limited(
-            start, 0, bound, [start], found_paths, found_paths_set, max_path,graph_list_format
-        )
-        
-        # 2. Handle termination conditions
-        if result == "MAX_FOUND":
+    # --------------------------
+    # Iterative deepening loop
+    # --------------------------
+    bound = heuristic(start, goal, coords)
+
+    while len(found_paths) < max_paths:
+
+        min_exceed = float('inf')
+
+        dfs_limited(start, 0, bound, [start])
+
+        # If no better bound found, stop
+        if min_exceed == float('inf'):
             break
-            
-        # no more nodes to explore
-        if result == float('inf'):
-            break
-            
-        # 3. increase bound for next iteration
-        bound = result 
-        
-    # Final success/failure yield
+
+        bound = min_exceed  # Increase search limit
+
+    # --------------------------
+    # Convert found paths to metrics
+    # --------------------------
     if found_paths:
-        found_paths.sort(key=lambda x:x[0])
-        return [
-            {
-                "path": path, 
-                "goal_node": path[-1], 
-                "meet_node": None 
-            } 
-            for path in found_paths
-        ]
-    else:
-        return []
+        found_paths.sort(key=lambda p: path_cost(p, graph, accident_segments, accident_multiplier))
+        for p in found_paths[:max_paths]:
+            final_total_cost = path_cost(p, graph, accident_segments, accident_multiplier)
+            path_metrics.append({
+                "path": p,
+                "goal_node": goal, 
+                "meet_node": None,
+                "total_cost": final_total_cost, 
+                "step_count": len(p) - 1
+            })
+        return path_metrics
 
-def calculate_path_cost(path: List[str], cost_func: Callable[[str, str], float]) -> float:
-    """Calculates the total cost of a path using the provided cost function."""
-    total_cost=0.0
-    for i in range(len(path) -1):
-        u=path[i]
-        v=path[i+1]
-        cost=cost_func(u,v)
-        # Path segment is not connected (should not happen for a valid path)
-        if cost==float('inf'):
-            return float('inf')
-        
-        total_cost+=cost
-    return total_cost
+    return []
 
-def find_path_algorithm(graph: Graph, start: str, end: str, algorithm_choice: str, cost_func: Callable[[str, str], float]) -> Tuple[Union[List[str], None], float, int]:
-    """Executes the chosen pathfinding algorithm and formats the result.
+def find_path_algorithm(
+    graph: Graph, 
+    start: str, 
+    end: str, 
+    algorithm_choice: str, 
+    accident_segments: dict[str, dict[str, Any]],
+    accident_multiplier: int
+) -> List[Dict[str, Any]]:
     """
-    graph_connections=graph.connections
-    coords=graph.coords
-    path_metrics:PathMetrics=[]
-    
-    if algorithm_choice in {"AS", "A*"}:
-        path_metrics = a_star(graph_connections, start, end, coords)
-    elif algorithm_choice in {"IDAS", "IDA*"}:
-        path_metrics = ida_star(graph_connections, start, end, coords)
-    elif algorithm_choice == 'GBFS':
-        path_metrics = gbfs(graph_connections, start, end, coords)
-    elif algorithm_choice == 'BFS':
-        path_metrics = bfs(graph_connections, start, end)
-    elif algorithm_choice == 'DFS':
-        path_metrics = dfs(graph_connections, start, end)
-    elif algorithm_choice == 'BDS':
-        path_metrics = bds(graph_connections, start, end)
+    Executes the chosen pathfinding algorithm and returns all found paths
+    with total cost and step count for each.
+    """
+    cleaned_algorithm_choice = algorithm_choice.strip()
+    coords = graph.coords
+    path_metrics: PathMetrics = []
+
+    # Select algorithm
+    if cleaned_algorithm_choice == "A*":
+        path_metrics = a_star(graph, start, end, coords,accident_multiplier=accident_multiplier,accident_segments=accident_segments)
+    elif cleaned_algorithm_choice == "IDA*":
+        path_metrics = ida_star(graph, start, end, coords,accident_multiplier=accident_multiplier, accident_segments=accident_segments)
+    elif cleaned_algorithm_choice == "GBFS":
+        path_metrics = gbfs(graph, start, end,coords,accident_multiplier=accident_multiplier,accident_segments=accident_segments)
+    elif cleaned_algorithm_choice == "BFS":
+        path_metrics = bfs(graph, start, end,accident_multiplier=accident_multiplier,accident_segments=accident_segments)
+    elif cleaned_algorithm_choice == "DFS":
+        path_metrics = dfs(graph, start, end,accident_multiplier=accident_multiplier,accident_segments=accident_segments)
+    elif cleaned_algorithm_choice == "BDS":
+        path_metrics = bds(graph, start, end,accident_multiplier=accident_multiplier,accident_segments=accident_segments)
     else:
         print(f"Error: Unknown algorithm choice: {algorithm_choice}")
-        return None, 0.0, 0
-    
-    if path_metrics:
-        best_result=path_metrics[0]
-        path:Path=best_result["path"]
-        
-        total_cost=calculate_path_cost(path,cost_func)
-        steps_count:int = best_result.get("step_count", len(path)-1)
-        return path, total_cost,steps_count
-    else:
-        return None, 0.0,0
-    
- 
+        return []
+
+    # Prepare all paths info
+    all_paths_info = []
+    for pm in path_metrics:
+        path = pm.get("path", [])
+        if not path:
+            continue
+
+        # Use cost returned from algorithm instead of recalculating
+        total_cost = pm.get("total_cost", 0)
+        steps_count = pm.get("step_count", len(path) - 1)
+
+        all_paths_info.append({
+            "path": path,
+            "total_cost": total_cost,
+            "steps_count": steps_count,
+            "isBest": False
+        })
+
+    # Mark the best path by total cost
+    if all_paths_info:
+        best_index = min(range(len(all_paths_info)), key=lambda i: all_paths_info[i]["total_cost"])
+        all_paths_info[best_index]["isBest"] = True
+
+    return all_paths_info

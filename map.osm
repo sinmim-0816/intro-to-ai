@@ -3830,8 +3830,8 @@
  <node id="4002344795" visible="true" version="1" changeset="37164434" timestamp="2016-02-12T11:02:41Z" user="Pizza1016" uid="838520" lat="1.5541192" lon="110.3462471"/>
  <node id="4002344796" visible="true" version="1" changeset="37164434" timestamp="2016-02-12T11:02:41Z" user="Pizza1016" uid="838520" lat="1.5542145" lon="110.3465237"/>
  <node id="4143835789" visible="true" version="1" changeset="38824916" timestamp="2016-04-24T03:09:15Z" user="cumbop" uid="3868198" lat="1.5593489" lon="110.3460127">
-  <tag k="name" v="Kuching Waterfront Lodge"/>
-  <tag k="tourism" v="hostel"/>
+    <tag k="name" v="Kuching Waterfront Lodge"/>
+    <tag k="tourism" v="hostel"/>
  </node>
  <node id="4186870293" visible="true" version="3" changeset="39465384" timestamp="2016-05-21T08:09:14Z" user="LibbyBell" uid="3963214" lat="1.5579477" lon="110.3467870">
   <tag k="amenity" v="bar"/>
@@ -5670,7 +5670,7 @@
   <tag k="cuisine" v="malaysian;indian"/>
   <tag k="name" v="Ceylonese Restaurant"/>
  </node>
- <node id="6155279791" visible="true" version="1" changeset="65710184" timestamp="2018-12-23T09:23:13Z" user="nitnatsnok" uid="591598" lat="1.5596380" lon="110.3444073">
+ <node id="6155279791" visible="true" version="1" changeset=   "65710184" timestamp="2018-12-23T09:23:13Z" user="nitnatsnok" uid="591598" lat="1.5596380" lon="110.3444073">
   <tag k="amenity" v="restaurant"/>
   <tag k="cuisine" v="malaysian"/>
   <tag k="name" v="Restoron Maha Shafi"/>
@@ -14982,6 +14982,7 @@
   <tag k="highway" v="secondary"/>
   <tag k="oneway" v="yes"/>
   <tag k="surface" v="asphalt"/>
+  <tag k="name" v="Tua Pek Kong Road"/>
  </way>
  <way id="129257607" visible="true" version="20" changeset="158837599" timestamp="2024-11-07T00:31:07Z" user="GrabMY_kimberly" uid="21796759">
   <nd ref="822687440"/>
@@ -17032,6 +17033,7 @@
   <nd ref="2438895586"/>
   <tag k="foot" v="no"/>
   <tag k="highway" v="primary"/>
+  <tag k="name" v="Jalan Satok"/>
   <tag k="oneway" v="yes"/>
  </way>
  <way id="234204897" visible="true" version="4" changeset="105196262" timestamp="2021-05-24T05:35:10Z" user="Fadlilaa IRM-RV" uid="8650974">
@@ -17254,6 +17256,7 @@
   <nd ref="2433871990"/>
   <tag k="highway" v="secondary"/>
   <tag k="oneway" v="yes"/>
+  <tag k="name" v="Chinese Museum Road"/>
  </way>
  <way id="235306780" visible="true" version="4" changeset="67705872" timestamp="2019-03-02T05:29:18Z" user="Scott97" uid="6468823">
   <nd ref="2433871990"/>
@@ -17299,6 +17302,7 @@
   <nd ref="2433871989"/>
   <tag k="highway" v="secondary"/>
   <tag k="oneway" v="yes"/>
+  <tag k="name" v="Chinese Museum Road"/>
  </way>
  <way id="235310826" visible="true" version="4" changeset="140160486" timestamp="2023-08-21T04:23:21Z" user="GrabMY_ainayusof" uid="9658463">
   <nd ref="2272381266"/>
@@ -17312,6 +17316,7 @@
   <nd ref="9763215295"/>
   <tag k="highway" v="secondary"/>
   <tag k="oneway" v="yes"/>
+  <tag k="name" v="Chinese Museum Road"/>
  </way>
  <way id="235524098" visible="true" version="1" changeset="17559725" timestamp="2013-08-28T19:42:33Z" user="CoolCityCat" uid="1199317">
   <nd ref="2435700043"/>
@@ -24057,6 +24062,7 @@
   <nd ref="1289015318"/>
   <tag k="highway" v="primary"/>
   <tag k="oneway" v="yes"/>
+  <tag k="name" v="Jalan Satok"/>
  </way>
  <way id="927259824" visible="true" version="1" changeset="102498503" timestamp="2021-04-07T17:21:57Z" user="Bulls_eye" uid="9461089">
   <nd ref="8603239392"/>
@@ -31095,7 +31101,7 @@
   <member type="way" ref="355221277" role="inner"/>
   <tag k="building" v="yes"/>
   <tag k="name" v="Sarawak Islamic Heritage Museum"/>
-  <tag k="name:en" v="Sarawak Islamic Heritage Museum"/>
+  <tag k="name:en" v=""/>
   <tag k="name:my" v="Muzium Warisan Islam"/>
   <tag k="start_date" v="1930"/>
   <tag k="tourism" v="museum"/>
